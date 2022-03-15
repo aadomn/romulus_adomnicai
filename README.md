@@ -5,6 +5,7 @@ This repository contain software implementations of [Romulus](https://romulusae.
 These implementations were written to answer the [call for protected software implementations](https://cryptography.gmu.edu/athena/LWC/Call_for_Protected_Software_Implementations.pdf) issued by the [Cryptographic Engineering Research Group](https://cryptography.gmu.edu/) from George Mason University, and therefore follow the proposed API.
 
 Note that the implementations require an external `randombytes` function with the following prototype:
+
 `void randombytes(unsigned char *,unsigned long long);`
 in order to generate the shares used as masks.
 
