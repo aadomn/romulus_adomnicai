@@ -57,11 +57,7 @@
 })
 
 //Core Romulus-T functions w/ 1st-order masking.
-void romulust_init(
-    uint8_t *state,
-    uint8_t *state_m,
-    uint8_t *tk1
-);
+void zeroize(uint8_t buf[], int buflen);
 
 int romulusht(
     unsigned char out[],
@@ -74,9 +70,9 @@ int romulusht(
 
 void romulust_kdf(
     uint8_t state[],
-    uint8_t state_m[],
     uint8_t tk1[],
-    const unsigned char npub[],
+    unsigned char npub[],
+    unsigned char npub_m[],
     const unsigned char k[],
     const unsigned char k_m[]
 );
@@ -97,7 +93,8 @@ void romulust_generate_tag(
     unsigned long long adlen,
     const unsigned char c[],
     unsigned long long mlen,
-    const unsigned char npub[],
+    unsigned char npub[],
+    unsigned char npub_m[],
     const unsigned char k[],
     const unsigned char k_m[]
 );

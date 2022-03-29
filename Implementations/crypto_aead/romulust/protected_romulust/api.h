@@ -8,5 +8,5 @@
 #define NUM_SHARES_M 		1
 #define NUM_SHARES_C 		1
 #define NUM_SHARES_AD 		1
-#define NUM_SHARES_NPUB 	1 
+#define NUM_SHARES_NPUB 	2 // 1st-order masking => 2 shares
 #define NUM_SHARES_KEY 		2 // 1st-order masking => 2 shares

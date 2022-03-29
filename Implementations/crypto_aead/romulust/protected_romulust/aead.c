@@ -110,13 +110,15 @@ void generate_shares_encrypt(
             ads[adlen/4].shares[0] |= (uint32_t)(ad[adlen - r + i] << 8*i);
     }
 
-    // npub is not split into shares, simple copy
-    for(i = 0; i < BLOCKBYTES/4; i++) {
-        npubs[i].shares[0]  = (uint32_t)(npub[i*4 + 0] << 0);
-        npubs[i].shares[0] |= (uint32_t)(npub[i*4 + 1] << 8);
-        npubs[i].shares[0] |= (uint32_t)(npub[i*4 + 2] << 16);
-        npubs[i].shares[0] |= (uint32_t)(npub[i*4 + 3] << 24);
-    }
+    // public nonce is split into 2 shares (1st-order masking)
+    randombytes((uint8_t *)(&(npubs[0].shares[1])), 4);
+    randombytes((uint8_t *)(&(npubs[1].shares[1])), 4);
+    randombytes((uint8_t *)(&(npubs[2].shares[1])), 4);
+    randombytes((uint8_t *)(&(npubs[3].shares[1])), 4);
+    npubs[0].shares[0] = npubs[0].shares[1] ^ ((uint32_t *)npub)[0];
+    npubs[1].shares[0] = npubs[1].shares[1] ^ ((uint32_t *)npub)[1];
+    npubs[2].shares[0] = npubs[2].shares[1] ^ ((uint32_t *)npub)[2];
+    npubs[3].shares[0] = npubs[3].shares[1] ^ ((uint32_t *)npub)[3];
 
     // encryption key is split into 2 shares (1st-order masking)
     randombytes((uint8_t *)(&(ks[0].shares[1])), 4);
@@ -171,13 +173,15 @@ void generate_shares_decrypt(
             ads[adlen/4].shares[0] |= (uint32_t)(ad[adlen - r + i] << 8*i);
     }
 
-    // npub is not split into shares, simple copy
-    for(i = 0; i < BLOCKBYTES/4; i++) {
-        npubs[i].shares[0]  = (uint32_t)(npub[i*4 + 0] << 0);
-        npubs[i].shares[0] |= (uint32_t)(npub[i*4 + 1] << 8);
-        npubs[i].shares[0] |= (uint32_t)(npub[i*4 + 2] << 16);
-        npubs[i].shares[0] |= (uint32_t)(npub[i*4 + 3] << 24);
-    }
+    // public nonce is split into 2 shares (1st-order masking)
+    randombytes((uint8_t *)(&(npubs[0].shares[1])), 4);
+    randombytes((uint8_t *)(&(npubs[1].shares[1])), 4);
+    randombytes((uint8_t *)(&(npubs[2].shares[1])), 4);
+    randombytes((uint8_t *)(&(npubs[3].shares[1])), 4);
+    npubs[0].shares[0] = npubs[0].shares[1] ^ ((uint32_t *)npub)[0];
+    npubs[1].shares[0] = npubs[1].shares[1] ^ ((uint32_t *)npub)[1];
+    npubs[2].shares[0] = npubs[2].shares[1] ^ ((uint32_t *)npub)[2];
+    npubs[3].shares[0] = npubs[3].shares[1] ^ ((uint32_t *)npub)[3];
 
     // encryption key is split into 2 shares (1st-order masking)
     randombytes((uint8_t *)(&(ks[0].shares[1])), 4);
@@ -216,24 +220,27 @@ int crypto_aead_encrypt_shared(
     const mask_npub_uint32_t *npubs,
     const mask_key_uint32_t *ks)
 {
-    uint8_t state[BLOCKBYTES];      // internal state (1st share)
-    uint8_t state_m[BLOCKBYTES];    // internal state (2nd share)
+    uint8_t state[BLOCKBYTES];      // internal state
     uint8_t tk1[BLOCKBYTES];
     uint8_t k[TWEAKEYBYTES];        // round tweakeys (1st share)
     uint8_t k_m[TWEAKEYBYTES];      // round tweakeys (2nd share)
+    uint8_t npub[TWEAKEYBYTES];     // public nonce (1st share)
+    uint8_t npub_m[TWEAKEYBYTES];   // public nonce (2nd share)
 
     // put the 2 128-bit key shares into k and k_m
     shares_to_bytearr_2(k, k_m, ks);
+    // put the 2 128-bit npub shares into npub and npub_m
+    shares_to_bytearr_2(npub, npub_m, (mask_key_uint32_t *)npubs);
     *clen = mlen + TAGBYTES;
-    romulust_init(state, state_m, tk1);
-    romulust_kdf(state, state_m, tk1, (uint8_t *)npubs, k, k_m);
-    romulust_process_msg(state, tk1, (uint8_t *)npubs, (uint8_t *)cs, (uint8_t *)ms, mlen);
+    zeroize(tk1, BLOCKBYTES);
+    romulust_kdf(state, tk1, npub, npub_m, k, k_m);
+    romulust_process_msg(state, tk1, npub, (uint8_t *)cs, (uint8_t *)ms, mlen);
     romulust_generate_tag(
         (uint8_t *)cs + mlen,
         tk1,
         (uint8_t *)ads, adlen,
         (uint8_t *)cs, mlen,
-        (uint8_t *)npubs,
+        npub, npub_m,
         k, k_m);
     return 0;
 }
@@ -250,11 +257,12 @@ int crypto_aead_decrypt_shared(
     const mask_npub_uint32_t *npubs,
     const mask_key_uint32_t *ks)
 {
-    uint8_t state[BLOCKBYTES];      // internal state (1st share)
-    uint8_t state_m[BLOCKBYTES];    // internal state (2nd share)
+    uint8_t state[BLOCKBYTES];      // internal state
     uint8_t tk1[BLOCKBYTES];
     uint8_t k[TWEAKEYBYTES];        // round tweakeys (1st share)
     uint8_t k_m[TWEAKEYBYTES];      // round tweakeys (2nd share)
+    uint8_t npub[TWEAKEYBYTES];     // public nonce (1st share)
+    uint8_t npub_m[TWEAKEYBYTES];   // public nonce (2nd share)
     uint8_t tmp = 0x00;
 
     if (clen < TAGBYTES)
@@ -262,22 +270,27 @@ int crypto_aead_decrypt_shared(
 
     // put the 2 128-bit key shares into k and k_m
     shares_to_bytearr_2(k, k_m, ks);
+    // put the 2 128-bit npub shares into npub and npub_m
+    shares_to_bytearr_2(npub, npub_m, (mask_key_uint32_t *)npubs);
     *mlen = clen - TAGBYTES;
-    romulust_init(state, state_m, tk1);
+    // unmask npub for tag generation
+    for(int i = 0; i < BLOCKBYTES; i++)
+        npub[i] ^= npub_m[i];
+    zeroize(tk1, BLOCKBYTES);
     romulust_generate_tag(
         state,
         tk1,
         (uint8_t *)ads, adlen,
         (uint8_t *)cs, *mlen,
-        (uint8_t *)npubs,
+        npub, npub_m,
         k, k_m);
     // tag verification
     for(int i = 0; i < TAGBYTES; i++)
         tmp |= state[i] ^ ((uint8_t *)cs)[clen-TAGBYTES+i];   //constant-time tag comparison
     if (tmp)
       return -1;
-    romulust_init(state, state_m, tk1);
-    romulust_kdf(state, state_m, tk1, (uint8_t *)npubs, k, k_m);
-    romulust_process_msg(state, tk1, (uint8_t *)npubs, (uint8_t *)ms, (uint8_t *)cs, *mlen);
+    zeroize(tk1, BLOCKBYTES);
+    romulust_kdf(state, tk1, npub, npub_m, k, k_m);
+    romulust_process_msg(state, tk1, npub, (uint8_t *)ms, (uint8_t *)cs, *mlen);
     return 0;
 }

@@ -12,7 +12,7 @@
 /**
  * Equivalent to 'memset(buf, 0x00, buflen)'.
  */
-static void zeroize(uint8_t buf[], int buflen)
+void zeroize(uint8_t buf[], int buflen)
 {
   int i;
   for(i = 0; i < buflen; i++)
@@ -223,18 +223,6 @@ int romulusht(
 }
 
 /**
- * TK1 is initialized to  while the internal state is initialized to npub with
- * 1st-order Boolean masking.
- */
-void romulust_init(uint8_t *state, uint8_t *state_m, uint8_t *tk1)
-{
-  int i;
-  zeroize(tk1, BLOCKBYTES);
-  zeroize(state, BLOCKBYTES);
-  zeroize(state_m, BLOCKBYTES);
-}
-
-/**
  * Key derivation function used in Romulus-T.
  * This function requires side-channel countermeasure since the secret key is
  * directly manipulated.
@@ -242,22 +230,24 @@ void romulust_init(uint8_t *state, uint8_t *state_m, uint8_t *tk1)
  */
 void romulust_kdf(
   uint8_t *state,
-  uint8_t *state_m,
   uint8_t *tk1,
-  const unsigned char *npub,
-  const unsigned char *k,
-  const unsigned char *k_m)
+  unsigned char *npub, unsigned char *npub_m,
+  const unsigned char *k, const unsigned char *k_m)
 {
 	uint32_t tmp;
+  uint8_t state_m[BLOCKBYTES];
   uint8_t rtk_1[TKPERMORDER*BLOCKBYTES];
   uint8_t rtk_3[SKINNY128_384_ROUNDS*BLOCKBYTES];
   uint8_t rtk_3m[SKINNY128_384_ROUNDS*BLOCKBYTES];
 	SET_DOMAIN(tk1, 0x42);
   tk_schedule_13_m(rtk_1, rtk_3, rtk_3m, tk1, k, k_m);
-  skinny128_384_plus_m(state, state_m, npub, state_m, rtk_3, rtk_3m, rtk_1);
+  skinny128_384_plus_m(state, state_m, npub, npub_m, rtk_3, rtk_3m, rtk_1);
   // unmask derived key for further calls to skinny-128-384+
-  for(int i = 0; i < BLOCKBYTES; i++)
-    state[i] ^= state_m[i];
+  for(int i = 0; i < BLOCKBYTES; i++) {
+    state[i]  ^= state_m[i];
+    npub[i]   ^= npub_m[i];
+    npub_m[i]  = state_m[i]; // use the updated mask for tag generation
+  }
   tk1[0] = 0x01;  // init counter
 }
 
@@ -310,12 +300,10 @@ void romulust_generate_tag(
   unsigned long long adlen,
   const unsigned char *c,
   unsigned long long mlen,
-  const unsigned char *npub,
-  const unsigned char *k,
-  const unsigned char *k_m)
+  unsigned char *npub, unsigned char *npub_m,
+  const unsigned char *k, const unsigned char *k_m)
 {
 	uint8_t hash[2*BLOCKBYTES];
-  uint8_t tag_m[BLOCKBYTES];
   uint8_t rtk_1[TKPERMORDER*BLOCKBYTES];
   uint8_t rtk_23[SKINNY128_384_ROUNDS*BLOCKBYTES];
   uint8_t rtk_23m[SKINNY128_384_ROUNDS*BLOCKBYTES];
@@ -324,9 +312,13 @@ void romulust_generate_tag(
   zeroize(tk1, BLOCKBYTES);
   SET_DOMAIN(tk1, 0x44);
   tk_schedule_123_m(rtk_1, rtk_23, rtk_23m, tk1, hash+BLOCKBYTES, k, k_m);
-  zeroize(tag_m, BLOCKBYTES);
-  skinny128_384_plus_m(tag, tag_m, hash, tag_m, rtk_23, rtk_23m, rtk_1);
-  // unmask output tag
+  // mask input block
   for(int i = 0; i < BLOCKBYTES; i++)
-    tag[i] ^= tag_m[i];
+    hash[i] ^= npub_m[i];
+  skinny128_384_plus_m(tag, npub_m, hash, npub_m, rtk_23, rtk_23m, rtk_1);
+  // unmask output tag
+  for(int i = 0; i < BLOCKBYTES; i++) {
+    tag[i]  ^= npub_m[i];
+    npub[i] ^= npub_m[i]; // mask again npub for crypto_aead_decrypt
+  }
 }
